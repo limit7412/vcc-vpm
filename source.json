@@ -3,9 +3,7 @@
     "id":"com.qazx7412.vpm",
     "url":"https://limit7412.github.com/vcc-vpm/index.json",
     "author":{
-        "email":"developer@vrchat.com",
-        "name":"VRChat",
-        "url":"https://hello.vrchat.com"
+        "name":"kairox"
     },
     "githubRepos":[
         "limit7412/VRCARKitBlendShapeGenerator"
