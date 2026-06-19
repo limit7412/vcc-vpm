@@ -29,6 +29,48 @@ You'll need to edit some of the files in this template, starting with [`source.j
 
 Whenever you make a change to the `main` branch, or when you trigger it manually, the 'Build Repo Listing' action will make a new index of all the releases available and publish them as a website hosted fore free on GitHub Pages. This listing can be used by the VPM to keep your package up to date, and the generated index page can serve as a simple landing page with info for your package. The URL for your package will be in the format https://username.github.io/repo-name.
 
+## 🔄 Auto-Updating on New Releases
+
+The listing is rebuilt automatically when a linked package publishes a new release,
+so you don't have to touch `source.json` every time.
+
+### Scheduled detection (no setup required)
+The [`detect-release.yml`](.github/workflows/detect-release.yml) workflow runs every
+6 hours, checks the latest release of every repository listed in
+[`githubRepos`](source.json), and re-triggers the 'Build Repo Listing' action only
+when it detects a new release. You can also run it manually from the "Actions" tab
+("Detect Package Releases" → "Run workflow"), and you can change the schedule by
+editing the `cron` expression in that file.
+
+### Instant updates on release (optional)
+If you want the listing to update the moment a package is released (instead of
+waiting up to 6 hours), add a workflow like the following to the **package
+repository**. It sends a `repository_dispatch` event that immediately triggers the
+build here:
+
+```yaml
+# .github/workflows/notify-vpm-listing.yml in your package repo
+name: Notify VPM Listing
+on:
+  release:
+    types: [published]
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger listing rebuild
+        run: |
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.LISTING_DISPATCH_TOKEN }}" \
+            https://api.github.com/repos/limit7412/vcc-vpm/dispatches \
+            -d '{"event_type":"package-released"}'
+```
+
+`LISTING_DISPATCH_TOKEN` must be a Personal Access Token (or fine-grained token)
+with `contents: write` / Actions permission on this listing repository, stored as a
+secret in the package repository.
+
 ## 🏠 Customizing the Landing Page
 
 The contents of the `Website` directory can be customized to change the appearance of the landing page. Most of the information will be automatically filled in with information from [`source.json`](source.json). Customizing the landing page by hand is not required.

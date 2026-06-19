@@ -1,7 +1,11 @@
 name: Build Repo Listing
 
-on: 
+on:
   workflow_dispatch:
+  # Allow a linked package repository to rebuild the listing instantly on
+  # release (see "Instant updates on release" in the README).
+  repository_dispatch:
+    types: [package-released]
   push:
     branches: main
     paths: source.json
