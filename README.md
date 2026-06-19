@@ -36,9 +36,11 @@ so you don't have to touch `source.json` every time.
 
 ### Scheduled detection (no setup required)
 The [`detect-release.yml`](.github/workflows/detect-release.yml) workflow runs every
-6 hours, checks the latest release of every repository listed in
-[`githubRepos`](source.json), and re-triggers the 'Build Repo Listing' action only
-when it detects a new release. You can also run it manually from the "Actions" tab
+6 hours, checks the latest release (including prereleases) of every repository listed
+in [`githubRepos`](source.json), and re-triggers the 'Build Repo Listing' action only
+when it detects a new release. The new release is remembered only after the listing
+deploys successfully, so a failed build is automatically retried on the next check.
+You can also run it manually from the "Actions" tab
 ("Detect Package Releases" → "Run workflow"), and you can change the schedule by
 editing the `cron` expression in that file.
 

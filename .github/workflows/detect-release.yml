@@ -2,8 +2,11 @@ name: Detect Package Releases
 
 # Watches the repositories listed in `source.json` (`githubRepos`) and
 # rebuilds the VPM listing automatically whenever any of them publishes a
-# new release. The listing build (build-listing.yml) always pulls the
-# latest releases, so we only need to (re)trigger it when something changed.
+# new release (prereleases included). The listing build (build-listing.yml)
+# always pulls the latest releases, so we only need to (re)trigger it when
+# something changed. The "seen" state is recorded by build-listing only
+# after it deploys successfully, so a failed build is retried on the next
+# check instead of being silently skipped.
 
 on:
   schedule:
@@ -41,7 +44,9 @@ jobs:
 
           : > release-state.txt
           for repo in $repos; do
-            tag=$(gh release view --repo "$repo" --json tagName --jq .tagName 2>/dev/null || echo "none")
+            # Use the releases API (newest first) so prereleases are detected
+            # too — `gh release view` / the "latest" endpoint skip prereleases.
+            tag=$(gh api "repos/${repo}/releases?per_page=1" --jq '.[0].tag_name // "none"' 2>/dev/null || echo "none")
             echo "${repo}=${tag}" >> release-state.txt
           done
 
@@ -63,14 +68,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "New release(s) detected — rebuilding the VPM listing."
-          gh workflow run build-listing.yml --ref ${{ github.ref_name }}
-
-      - name: Remember current state
-        if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: release-state.txt
-          key: vpm-release-state-${{ steps.state.outputs.hash }}
+          # Pass the state hash so build-listing records it as "seen" only
+          # after it deploys successfully (see save-release-state step there).
+          gh workflow run build-listing.yml \
+            --ref ${{ github.ref_name }} \
+            -f release-state-hash=${{ steps.state.outputs.hash }}
 
       - name: Up to date
         if: steps.cache.outputs.cache-hit == 'true'
