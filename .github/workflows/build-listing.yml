@@ -1,7 +1,19 @@
 name: Build Repo Listing
 
-on: 
+on:
   workflow_dispatch:
+    inputs:
+      release-state-hash:
+        description: >-
+          Internal: set by the Detect Package Releases workflow. The release
+          state is recorded as "seen" only after a successful deploy, so a
+          failed build is retried on the next check.
+        required: false
+        default: ''
+  # Allow a linked package repository to rebuild the listing instantly on
+  # release (see "Instant updates on release" in the README).
+  repository_dispatch:
+    types: [package-released]
   push:
     branches: main
     paths: source.json
@@ -62,3 +74,17 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      # Record the release state as "seen" for the release detector, but only
+      # now that the deploy has succeeded. This step is skipped on failure
+      # (no `if: always()`), so a broken build is retried on the next check.
+      - name: Record built release state
+        if: ${{ inputs.release-state-hash != '' }}
+        run: echo "${{ inputs.release-state-hash }}" > release-state.txt
+
+      - name: Save release state cache
+        if: ${{ inputs.release-state-hash != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: release-state.txt
+          key: vpm-release-state-${{ inputs.release-state-hash }}
