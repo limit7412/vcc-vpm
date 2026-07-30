@@ -51,10 +51,12 @@ releases. So the notification is pushed the other way around:
 Because step 3 always reads the current releases, one notification is enough to pick
 up everything — nothing needs to be remembered between runs.
 
-A release notification only arrives once, so if the build fails on a transient error
-[`retry-listing.yml`](.github/workflows/retry-listing.yml) re-runs it (up to 3
-attempts, backing off between them) rather than leaving the listing stale until the
-next release.
+A release notification only arrives once, so both halves retry on transient errors
+rather than leaving the listing stale until the next release: the notifier retries
+the dispatch request itself (5 attempts), and
+[`retry-listing.yml`](.github/workflows/retry-listing.yml) re-runs a dispatched build
+that failed (3 attempts). If the notification still can't be delivered, the release
+job in the package repo fails, so it shows up rather than passing silently.
 
 ### Setup, per package repository
 

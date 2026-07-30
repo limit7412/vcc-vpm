@@ -59,8 +59,30 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           echo "Notifying ${LISTING_REPO} about ${SOURCE_REPO}@${RELEASE_TAG:-unknown}"
+
           jq -n \
             --arg repository "$SOURCE_REPO" \
             --arg tag "$RELEASE_TAG" \
             '{event_type: "package-released", client_payload: {repository: $repository, tag: $tag}}' \
-            | gh api --method POST "repos/${LISTING_REPO}/dispatches" --input -
+            > payload.json
+
+          # The release event fires once, and a dispatch that never lands leaves
+          # the listing stale with nothing to retry it — the listing repo's retry
+          # workflow reacts to builds, and a failed dispatch produces no build.
+          # So retry here, on transient API/network/rate-limit errors.
+          for attempt in 1 2 3 4 5; do
+            if gh api --method POST "repos/${LISTING_REPO}/dispatches" --input payload.json; then
+              echo "Listing rebuild requested."
+              exit 0
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              delay=$((attempt * 15))
+              echo "Dispatch failed (attempt ${attempt}/5); retrying in ${delay}s."
+              sleep "$delay"
+            fi
+          done
+
+          echo "::error::Could not notify ${LISTING_REPO} after 5 attempts." \
+               "If this is not a transient outage, check that LISTING_DISPATCH_TOKEN" \
+               "is valid and still has 'Contents: write' on ${LISTING_REPO}."
+          exit 1

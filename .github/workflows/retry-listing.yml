@@ -8,6 +8,14 @@ name: Retry Listing Build
 #
 # This restores that safety net without polling: it reacts to the build's own
 # completion and re-runs the failed attempt, backing off between tries.
+#
+# Only dispatched builds are retried. A re-run reuses the original run's commit
+# SHA and ref, so re-running a failed `source.json` push would rebuild from the
+# obsolete `source.json` — and could cancel or overwrite a newer push's deploy
+# through the shared "pages" concurrency group. Those triggers don't need this
+# anyway: a failed push or manual run is visible to whoever started it, whereas
+# a dispatch has no such audience. Dispatched builds are safe to re-run because
+# the listing is built from release data fetched live at build time.
 
 on:
   workflow_run:
@@ -21,11 +29,13 @@ permissions:
 jobs:
   retry:
     name: retry-listing-build
-    # Only failures, and only up to 3 attempts total. Each re-run raises
-    # `run_attempt`, so this bounds itself instead of looping on a build that is
-    # broken for a real reason. Runs cancelled by the "pages" concurrency group
-    # report `cancelled`, not `failure`, so a superseded build is never retried.
+    # Dispatched builds only (see above), failures only, and at most 3 attempts.
+    # Each re-run raises `run_attempt`, so this bounds itself instead of looping
+    # on a build that is broken for a real reason. Runs cancelled by the "pages"
+    # concurrency group report `cancelled`, not `failure`, so a superseded build
+    # is never retried.
     if: >-
+      github.event.workflow_run.event == 'repository_dispatch' &&
       github.event.workflow_run.conclusion == 'failure' &&
       github.event.workflow_run.run_attempt < 3
     runs-on: ubuntu-latest
