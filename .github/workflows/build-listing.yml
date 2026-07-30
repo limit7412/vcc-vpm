@@ -32,9 +32,6 @@ jobs:
   
   build-listing:
     name: build-listing
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
 
@@ -76,7 +73,20 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: ${{env.listPublishDirectory}}
-          
+
+  # Deploying in its own job keeps the artifact upload out of the retry path.
+  # `gh run rerun --failed` (see retry-listing.yml) then re-runs only the job that
+  # actually failed: a failed deploy no longer replays the upload, which would
+  # collide with the immutable `github-pages` artifact the first attempt already
+  # attached to this run and fail before ever reaching the deploy again.
+  deploy-listing:
+    name: deploy-listing
+    needs: build-listing
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
