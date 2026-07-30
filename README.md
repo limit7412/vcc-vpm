@@ -51,6 +51,11 @@ releases. So the notification is pushed the other way around:
 Because step 3 always reads the current releases, one notification is enough to pick
 up everything — nothing needs to be remembered between runs.
 
+A release notification only arrives once, so if the build fails on a transient error
+[`retry-listing.yml`](.github/workflows/retry-listing.yml) re-runs it (up to 3
+attempts, backing off between them) rather than leaving the listing stale until the
+next release.
+
 ### Setup, per package repository
 
 **1. Create a token.** A fine-grained [Personal Access Token](https://github.com/settings/personal-access-tokens)
@@ -72,13 +77,21 @@ on:
 jobs:
   notify:
     uses: limit7412/vcc-vpm/.github/workflows/notify-listing.yml@main
-    secrets: inherit
+    secrets:
+      LISTING_DISPATCH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
 ```
 
 `published` covers normal releases and prereleases; `released` also fires when an
 existing prerelease is promoted to a full release. You can add `edited` and
 `deleted` if you want edits and removals reflected too — rebuilding is idempotent,
 so extra notifications are harmless.
+
+Map the token explicitly as above rather than using `secrets: inherit`. `inherit`
+would hand *every* secret in the package repo — publishing tokens, signing keys —
+to a workflow loaded from another repository at a mutable ref, and this one needs
+exactly one secret. For the same reason you can pin the workflow to a reviewed
+commit (`...notify-listing.yml@<sha>`) instead of `@main`; the trade-off is that
+you then have to bump the SHA by hand whenever this repo's notifier changes.
 
 If you'd rather not depend on a workflow in this repo, the equivalent inline step is:
 

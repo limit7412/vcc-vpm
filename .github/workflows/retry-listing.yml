@@ -1,0 +1,50 @@
+name: Retry Listing Build
+
+# A release notification is a one-shot event: if 'Build Repo Listing' fails on a
+# transient error (checkout, NuGet restore, GitHub API, Pages deploy), nothing
+# would re-deliver it and the listing would stay stale until the next release or
+# a manual rerun. The previous scheduled detector got this for free — it recorded
+# a release as "seen" only after a successful deploy, so the next check retried.
+#
+# This restores that safety net without polling: it reacts to the build's own
+# completion and re-runs the failed attempt, backing off between tries.
+
+on:
+  workflow_run:
+    workflows: ["Build Repo Listing"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: write # required to re-run the build workflow
+
+jobs:
+  retry:
+    name: retry-listing-build
+    # Only failures, and only up to 3 attempts total. Each re-run raises
+    # `run_attempt`, so this bounds itself instead of looping on a build that is
+    # broken for a real reason. Runs cancelled by the "pages" concurrency group
+    # report `cancelled`, not `failure`, so a superseded build is never retried.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-run failed build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          # Back off before retrying, so a rate limit or a Pages hiccup has time
+          # to clear: 60s after the first failure, 120s after the second.
+          delay=$((60 * ATTEMPT))
+          echo "Build run ${RUN_ID} failed on attempt ${ATTEMPT}; retrying in ${delay}s."
+          sleep "$delay"
+          gh run rerun "$RUN_ID" --failed --repo "$GITHUB_REPOSITORY"
+
+      - name: Note exhausted retries
+        if: failure()
+        run: |
+          echo "::warning::Could not re-run build ${RUN_ID}. Rebuild manually from" \
+               "Actions → Build Repo Listing → Run workflow."

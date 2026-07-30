@@ -19,7 +19,12 @@ name: Notify Listing
 #   jobs:
 #     notify:
 #       uses: limit7412/vcc-vpm/.github/workflows/notify-listing.yml@main
-#       secrets: inherit
+#       secrets:
+#         LISTING_DISPATCH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
+#
+# Map the token explicitly rather than using `secrets: inherit` — inherit would
+# expose every secret in the package repo to a workflow loaded from another
+# repository at a mutable ref, and this workflow needs exactly one.
 #
 # `LISTING_DISPATCH_TOKEN` must be a secret in the package repository holding a
 # fine-grained Personal Access Token scoped to the listing repository with
@@ -58,4 +63,4 @@ jobs:
             --arg repository "$SOURCE_REPO" \
             --arg tag "$RELEASE_TAG" \
             '{event_type: "package-released", client_payload: {repository: $repository, tag: $tag}}' \
-            | gh api "repos/${LISTING_REPO}/dispatches" --input -
+            | gh api --method POST "repos/${LISTING_REPO}/dispatches" --input -
