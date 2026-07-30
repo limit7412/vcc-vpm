@@ -46,7 +46,14 @@ jobs:
             echo "Rebuilding: triggered by ${{ github.event_name }}."
           fi
 
+      # Build from the current default branch, not the commit that happened to
+      # trigger this run. A re-run replays the original run's SHA (see
+      # retry-listing.yml), which would otherwise rebuild from an obsolete
+      # `source.json` — and the published listing should always reflect the
+      # latest one regardless of which event started the build.
       - uses: actions/checkout@v4 # check out this repo
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - uses: actions/checkout@v4 # check out automation repo
         with:
           repository: vrchat-community/package-list-action

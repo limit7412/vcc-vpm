@@ -9,13 +9,15 @@ name: Retry Listing Build
 # This restores that safety net without polling: it reacts to the build's own
 # completion and re-runs the failed attempt, backing off between tries.
 #
-# Only dispatched builds are retried. A re-run reuses the original run's commit
-# SHA and ref, so re-running a failed `source.json` push would rebuild from the
-# obsolete `source.json` — and could cancel or overwrite a newer push's deploy
-# through the shared "pages" concurrency group. Those triggers don't need this
-# anyway: a failed push or manual run is visible to whoever started it, whereas
-# a dispatch has no such audience. Dispatched builds are safe to re-run because
-# the listing is built from release data fetched live at build time.
+# Only dispatched builds are retried: a failed push or manual run is visible to
+# whoever started it, whereas a dispatch has no such audience.
+#
+# A re-run replays the original run's commit SHA, so it cannot be relied on to
+# pick up newer commits. What makes re-running safe anyway is that the build does
+# not depend on that SHA: build-listing.yml checks out the default branch's
+# current HEAD, and the package versions come from release data fetched live. So
+# a re-run always produces a listing built from the latest `source.json`, even if
+# `source.json` changed after the run it is replaying.
 
 on:
   workflow_run:
@@ -53,13 +55,18 @@ jobs:
           echo "Build run ${RUN_ID} failed on attempt ${ATTEMPT}; retrying in ${delay}s."
           sleep "$delay"
 
-          # A re-run replays the original run's commit SHA, so it must not race a
-          # build that started meanwhile. Run IDs increase monotonically and the
-          # API lists newest first, so anything other than our own run at the top
-          # means a newer build exists. That build already covers this release
-          # (the listing is built from live release data), so re-running now could
-          # only cancel it through the "pages" concurrency group, or redeploy an
-          # older `source.json` over its result.
+          # Skip if a newer build has appeared: it already covers this release, so
+          # re-running would only spend a run and risk cancelling it through the
+          # shared "pages" concurrency group. Run IDs increase monotonically and
+          # the API lists newest first, so anything other than our own run at the
+          # top means a newer build exists.
+          #
+          # This is a courtesy check, not a correctness one, and it cannot be made
+          # raceless — a build can always start just after it passes. That race is
+          # harmless: every build assembles the listing from the default branch's
+          # current HEAD and live release data, so no build can publish an obsolete
+          # listing over a newer one, whichever order they finish in.
+          #
           # Retried too: the step runs under `bash -e`, so a transient failure here
           # would abort before the rerun below is ever attempted.
           latest=''
@@ -75,8 +82,8 @@ jobs:
               sleep "$((attempt * 15))"
             else
               # Deliberately conservative: without knowing whether a newer build
-              # exists, re-running risks cancelling it and redeploying an older
-              # listing over its result. Surface that instead of guessing.
+              # exists, re-running could cancel it and waste a run for nothing.
+              # Surface that instead of guessing.
               echo "::error::Could not determine whether a newer build exists;" \
                    "not re-running ${RUN_ID}."
               exit 1

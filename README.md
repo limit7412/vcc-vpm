@@ -137,11 +137,16 @@ If you'd rather not depend on a workflow in this repo, the equivalent inline ste
       - name: Trigger listing rebuild
         run: |
           curl -fsS -X POST \
+            --retry 5 --retry-delay 5 --retry-all-errors \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.LISTING_DISPATCH_TOKEN }}" \
             https://api.github.com/repos/limit7412/vcc-vpm/dispatches \
             -d '{"event_type":"package-released"}'
 ```
+
+Keep the `--retry` flags: a dispatch lost to a rate limit or a 5xx creates no build,
+so nothing downstream can recover it. That is the one thing this shorter form must
+not drop.
 
 ### Packages you don't control
 
