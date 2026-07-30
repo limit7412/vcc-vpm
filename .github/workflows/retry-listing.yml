@@ -68,7 +68,20 @@ jobs:
             exit 0
           fi
 
-          gh run rerun "$RUN_ID" --failed --repo "$GITHUB_REPOSITORY"
+          # A failure of *this* workflow does not re-trigger it, so if the rerun
+          # request itself is refused the build never reaches its next attempt.
+          # Retry the request the same way the notifier retries its dispatch.
+          for attempt in 1 2 3 4 5; do
+            if gh run rerun "$RUN_ID" --failed --repo "$GITHUB_REPOSITORY"; then
+              echo "Re-run of build ${RUN_ID} requested."
+              exit 0
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              echo "Re-run request failed (attempt ${attempt}/5); retrying in $((attempt * 15))s."
+              sleep "$((attempt * 15))"
+            fi
+          done
+          exit 1
 
       - name: Note exhausted retries
         if: failure()

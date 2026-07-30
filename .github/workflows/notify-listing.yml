@@ -43,6 +43,15 @@ on:
           the original repository instead of its own.
         type: string
         required: true
+      tag:
+        description: >-
+          Release tag to report. Defaults to the tag of the triggering release,
+          which is only present when the caller runs on a `release` event. Set it
+          explicitly when a publishing job calls this after creating the release
+          itself — see the note on GITHUB_TOKEN-published releases below.
+        type: string
+        required: false
+        default: ''
     secrets:
       LISTING_DISPATCH_TOKEN:
         description: >-
@@ -61,7 +70,7 @@ jobs:
           GH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
           LISTING_REPO: ${{ inputs.listing-repo }}
           SOURCE_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.tag != '' && inputs.tag || github.event.release.tag_name }}
         run: |
           echo "Notifying ${LISTING_REPO} about ${SOURCE_REPO}@${RELEASE_TAG:-unknown}"
 

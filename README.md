@@ -93,6 +93,37 @@ existing prerelease is promoted to a full release. You can add `edited` and
 `deleted` if you want edits and removals reflected too — rebuilding is idempotent,
 so extra notifications are harmless.
 
+#### If your releases are published by automation
+
+The workflow above relies on the `release` trigger, and that trigger **does not fire
+for a release created by Actions using the repo's `GITHUB_TOKEN`** — GitHub suppresses
+workflow runs from events raised by that token, to stop workflows triggering
+themselves. So if your package repo publishes releases from a workflow (`gh release
+create`, `softprops/action-gh-release`, release-please, and so on) rather than by hand,
+nothing above will run.
+
+Call the notifier from the publishing workflow instead, and pass the tag yourself
+since there's no `release` event to read it from:
+
+```yaml
+jobs:
+  publish:
+    # ... the job that creates the release, setting an output for the tag ...
+
+  notify:
+    needs: publish
+    uses: limit7412/vcc-vpm/.github/workflows/notify-listing.yml@main
+    with:
+      listing-repo: limit7412/vcc-vpm
+      tag: ${{ needs.publish.outputs.tag }}
+    secrets:
+      LISTING_DISPATCH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
+```
+
+Publishing the release through a PAT or GitHub App token instead also makes the
+`release` trigger fire normally, if you'd rather not restructure the workflow.
+Releases published by hand through the web UI are unaffected either way.
+
 Map the token explicitly as above rather than using `secrets: inherit`. `inherit`
 would hand *every* secret in the package repo — publishing tokens, signing keys —
 to a workflow loaded from another repository at a mutable ref, and this one needs
