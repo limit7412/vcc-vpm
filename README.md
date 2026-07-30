@@ -79,9 +79,14 @@ on:
 jobs:
   notify:
     uses: limit7412/vcc-vpm/.github/workflows/notify-listing.yml@main
+    with:
+      listing-repo: limit7412/vcc-vpm
     secrets:
       LISTING_DISPATCH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
 ```
+
+`listing-repo` has no default on purpose — keep it and the `uses:` line pointing at
+the same repository, so a copy of this listing can't end up notifying this one.
 
 `published` covers normal releases and prereleases; `released` also fires when an
 existing prerelease is promoted to a full release. You can add `edited` and

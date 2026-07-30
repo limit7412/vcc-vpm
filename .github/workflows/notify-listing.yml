@@ -19,6 +19,8 @@ name: Notify Listing
 #   jobs:
 #     notify:
 #       uses: limit7412/vcc-vpm/.github/workflows/notify-listing.yml@main
+#       with:
+#         listing-repo: limit7412/vcc-vpm
 #       secrets:
 #         LISTING_DISPATCH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
 #
@@ -34,10 +36,13 @@ on:
   workflow_call:
     inputs:
       listing-repo:
-        description: The listing repository to notify, as `owner/repo`.
+        description: >-
+          The listing repository to notify, as `owner/repo`. Point this at the
+          same repository the caller's `uses:` line refers to. Deliberately has
+          no default: a copy of this listing that inherited one would dispatch to
+          the original repository instead of its own.
         type: string
-        required: false
-        default: limit7412/vcc-vpm
+        required: true
     secrets:
       LISTING_DISPATCH_TOKEN:
         description: >-
