@@ -55,46 +55,14 @@ jobs:
           echo "Build run ${RUN_ID} failed on attempt ${ATTEMPT}; retrying in ${delay}s."
           sleep "$delay"
 
-          # Skip if a newer build has appeared: it already covers this release, so
-          # re-running would only spend a run and risk cancelling it through the
-          # shared "pages" concurrency group. Run IDs increase monotonically and
-          # the API lists newest first, so anything other than our own run at the
-          # top means a newer build exists.
+          # This deliberately does not check whether a newer build has appeared
+          # first. Because every build checks out the default branch's current HEAD
+          # and reads release data live, a re-run cannot publish anything staler
+          # than a concurrent build, so the worst case is a redundant run. Skipping
+          # on the mere existence of a newer run would be worse: if that run then
+          # failed, this release would never be deployed, because push and manual
+          # runs are not retried.
           #
-          # This is a courtesy check, not a correctness one, and it cannot be made
-          # raceless — a build can always start just after it passes. That race is
-          # harmless: every build assembles the listing from the default branch's
-          # current HEAD and live release data, so no build can publish an obsolete
-          # listing over a newer one, whichever order they finish in.
-          #
-          # Retried too: the step runs under `bash -e`, so a transient failure here
-          # would abort before the rerun below is ever attempted.
-          latest=''
-          for attempt in 1 2 3 4 5; do
-            if latest=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/build-listing.yml/runs?per_page=1" \
-              --jq '.workflow_runs[0].id // empty'); then
-              break
-            fi
-            latest=''
-            if [ "$attempt" -lt 5 ]; then
-              echo "Run lookup failed (attempt ${attempt}/5); retrying in $((attempt * 15))s."
-              sleep "$((attempt * 15))"
-            else
-              # Deliberately conservative: without knowing whether a newer build
-              # exists, re-running could cancel it and waste a run for nothing.
-              # Surface that instead of guessing.
-              echo "::error::Could not determine whether a newer build exists;" \
-                   "not re-running ${RUN_ID}."
-              exit 1
-            fi
-          done
-
-          if [ -n "$latest" ] && [ "$latest" != "$RUN_ID" ]; then
-            echo "Build run ${latest} has started since; it supersedes this retry."
-            exit 0
-          fi
-
           # A failure of *this* workflow does not re-trigger it, so if the rerun
           # request itself is refused the build never reaches its next attempt.
           # Retry the request the same way the notifier retries its dispatch.
