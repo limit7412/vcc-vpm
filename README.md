@@ -88,6 +88,13 @@ jobs:
 `listing-repo` has no default on purpose — keep it and the `uses:` line pointing at
 the same repository, so a copy of this listing can't end up notifying this one.
 
+**If your listing repository is private**, a package repo cannot load the workflow
+that `uses:` refers to until you allow it: in the *listing* repo, Settings → Actions
+→ General → "Access", permit access from other repositories you own. Without that the
+caller fails before any dispatch is sent. Alternatively use the inline `curl` step
+below, which has no cross-repository dependency. A public listing repo — the usual
+case, since Pages on a private repo needs a paid plan — needs nothing here.
+
 `published` covers normal releases and prereleases; `released` also fires when an
 existing prerelease is promoted to a full release. You can add `edited` and
 `deleted` if you want edits and removals reflected too — rebuilding is idempotent,
