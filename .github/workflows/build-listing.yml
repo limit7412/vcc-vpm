@@ -1,17 +1,12 @@
 name: Build Repo Listing
 
 on:
+  # Manual rebuild — also the way to catch up if a release notification was
+  # ever missed, since the build always reads the current releases.
   workflow_dispatch:
-    inputs:
-      release-state-hash:
-        description: >-
-          Internal: set by the Detect Package Releases workflow. The release
-          state is recorded as "seen" only after a successful deploy, so a
-          failed build is retried on the next check.
-        required: false
-        default: ''
-  # Allow a linked package repository to rebuild the listing instantly on
-  # release (see "Instant updates on release" in the README).
+  # A linked package repository tells us it published a release, which rebuilds
+  # the listing within seconds. See notify-listing.yml and the README section
+  # "Auto-Updating on New Releases".
   repository_dispatch:
     types: [package-released]
   push:
@@ -37,13 +32,28 @@ jobs:
   
   build-listing:
     name: build-listing
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      
+
+      - name: Report trigger
+        env:
+          RELEASED_REPO: ${{ github.event.client_payload.repository }}
+          RELEASED_TAG: ${{ github.event.client_payload.tag }}
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "Rebuilding: ${RELEASED_REPO:-a linked repository} published ${RELEASED_TAG:-a new release}."
+          else
+            echo "Rebuilding: triggered by ${{ github.event_name }}."
+          fi
+
+      # Build from the current default branch, not the commit that happened to
+      # trigger this run. A re-run replays the original run's SHA (see
+      # retry-listing.yml), which would otherwise rebuild from an obsolete
+      # `source.json` — and the published listing should always reflect the
+      # latest one regardless of which event started the build.
       - uses: actions/checkout@v4 # check out this repo
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - uses: actions/checkout@v4 # check out automation repo
         with:
           repository: vrchat-community/package-list-action
@@ -70,21 +80,20 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: ${{env.listPublishDirectory}}
-          
+
+  # Deploying in its own job keeps the artifact upload out of the retry path.
+  # `gh run rerun --failed` (see retry-listing.yml) then re-runs only the job that
+  # actually failed: a failed deploy no longer replays the upload, which would
+  # collide with the immutable `github-pages` artifact the first attempt already
+  # attached to this run and fail before ever reaching the deploy again.
+  deploy-listing:
+    name: deploy-listing
+    needs: build-listing
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-      # Record the release state as "seen" for the release detector, but only
-      # now that the deploy has succeeded. This step is skipped on failure
-      # (no `if: always()`), so a broken build is retried on the next check.
-      - name: Record built release state
-        if: ${{ inputs.release-state-hash != '' }}
-        run: echo "${{ inputs.release-state-hash }}" > release-state.txt
-
-      - name: Save release state cache
-        if: ${{ inputs.release-state-hash != '' }}
-        uses: actions/cache/save@v4
-        with:
-          path: release-state.txt
-          key: vpm-release-state-${{ inputs.release-state-hash }}

@@ -1,0 +1,105 @@
+name: Retry Listing Build
+
+# A release notification is a one-shot event: if 'Build Repo Listing' fails on a
+# transient error (checkout, NuGet restore, GitHub API, Pages deploy), nothing
+# would re-deliver it and the listing would stay stale until the next release or
+# a manual rerun. The previous scheduled detector got this for free — it recorded
+# a release as "seen" only after a successful deploy, so the next check retried.
+#
+# This restores that safety net without polling: it reacts to the build's own
+# completion and re-runs the failed attempt, backing off between tries.
+#
+# Every failed build is retried, whatever triggered it. Restricting this to
+# dispatched builds left a gap: the "pages" concurrency group cancels a running
+# dispatched build when a push or manual build supersedes it, and `cancelled` is
+# not retryable — so if that successor then failed and was itself ineligible,
+# the release was never deployed. Making all triggers eligible closes that, since
+# the last build in such a chain is always one that can be retried.
+#
+# A re-run replays the original run's commit SHA, so it cannot be relied on to
+# pick up newer commits. What makes re-running safe anyway is that the build does
+# not depend on that SHA: build-listing.yml checks out the default branch's
+# current HEAD, and the package versions come from release data fetched live. So
+# a re-run always produces a listing built from the latest `source.json`, even if
+# `source.json` changed after the run it is replaying.
+
+on:
+  workflow_run:
+    workflows: ["Build Repo Listing"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: write # required to re-run the build workflow
+
+jobs:
+  retry:
+    name: retry-listing-build
+    # At most 3 attempts — each re-run raises `run_attempt`, so this bounds itself
+    # instead of looping on a build that is broken for a real reason.
+    #
+    # Unsuccessful outcomes arrive under several conclusions, not just `failure`: a
+    # build that hangs past its limit can report `timed_out`, and one that dies
+    # before any job starts reports `startup_failure`. All are retried. `cancelled`
+    # is deliberately excluded — that is how the "pages" concurrency group reports
+    # a build that a newer one superseded, and the newer build covers it.
+    if: >-
+      contains(fromJSON('["failure", "timed_out", "startup_failure"]'), github.event.workflow_run.conclusion) &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-run failed build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          # Back off before retrying, so a rate limit or a Pages hiccup has time
+          # to clear: 60s after the first failure, 120s after the second.
+          delay=$((60 * ATTEMPT))
+          echo "Build run ${RUN_ID} ended as ${CONCLUSION} on attempt ${ATTEMPT};" \
+               "retrying in ${delay}s."
+          sleep "$delay"
+
+          # Normally re-run only the failed job, so that a failed deploy does not
+          # replay the artifact upload (see build-listing.yml). A `startup_failure`
+          # run has no failed job for `--failed` to select, since no job ever
+          # started, so re-run it whole — and for the same reason it cannot have
+          # left an artifact behind to collide with.
+          if [ "$CONCLUSION" = "startup_failure" ]; then
+            scope=()
+          else
+            scope=(--failed)
+          fi
+
+          # This deliberately does not check whether a newer build has appeared
+          # first. Because every build checks out the default branch's current HEAD
+          # and reads release data live, a re-run cannot publish anything staler
+          # than a concurrent build, so the worst case is a redundant run. Skipping
+          # on the mere existence of a newer run would be worse: if that run then
+          # failed, this release would never be deployed, because push and manual
+          # runs are not retried.
+          #
+          # A failure of *this* workflow does not re-trigger it, so if the rerun
+          # request itself is refused the build never reaches its next attempt.
+          # Retry the request the same way the notifier retries its dispatch.
+          for attempt in 1 2 3 4 5; do
+            if gh run rerun "$RUN_ID" "${scope[@]}" --repo "$GITHUB_REPOSITORY"; then
+              echo "Re-run of build ${RUN_ID} requested."
+              exit 0
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              echo "Re-run request failed (attempt ${attempt}/5); retrying in $((attempt * 15))s."
+              sleep "$((attempt * 15))"
+            fi
+          done
+          exit 1
+
+      - name: Note exhausted retries
+        if: failure()
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          echo "::warning::Could not re-run build ${RUN_ID}. Rebuild manually from" \
+               "Actions → Build Repo Listing → Run workflow."

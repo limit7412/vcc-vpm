@@ -1,0 +1,102 @@
+name: Notify Listing
+
+# Reusable workflow for the *package* repositories listed in `source.json`
+# (`githubRepos`). A package repo calls this from its own `release` trigger, and
+# it sends a `repository_dispatch` event to this listing repo, which rebuilds the
+# VPM listing immediately (see build-listing.yml).
+#
+# GitHub only delivers `release` events to workflows inside the releasing
+# repository, so the listing repo cannot subscribe to them itself — the package
+# repo has to push the notification. That is what this workflow is for.
+#
+# Usage, in the package repository:
+#
+#   # .github/workflows/notify-vpm-listing.yml
+#   name: Notify VPM Listing
+#   on:
+#     release:
+#       types: [published, released]
+#   jobs:
+#     notify:
+#       uses: limit7412/vcc-vpm/.github/workflows/notify-listing.yml@main
+#       with:
+#         listing-repo: limit7412/vcc-vpm
+#       secrets:
+#         LISTING_DISPATCH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
+#
+# Map the token explicitly rather than using `secrets: inherit` — inherit would
+# expose every secret in the package repo to a workflow loaded from another
+# repository at a mutable ref, and this workflow needs exactly one.
+#
+# `LISTING_DISPATCH_TOKEN` must be a secret in the package repository holding a
+# fine-grained Personal Access Token scoped to the listing repository with
+# "Contents: Read and write" (the permission the dispatch API requires).
+
+on:
+  workflow_call:
+    inputs:
+      listing-repo:
+        description: >-
+          The listing repository to notify, as `owner/repo`. Point this at the
+          same repository the caller's `uses:` line refers to. Deliberately has
+          no default: a copy of this listing that inherited one would dispatch to
+          the original repository instead of its own.
+        type: string
+        required: true
+      tag:
+        description: >-
+          Release tag to report. Defaults to the tag of the triggering release,
+          which is only present when the caller runs on a `release` event. Set it
+          explicitly when a publishing job calls this after creating the release
+          itself — see the note on GITHUB_TOKEN-published releases below.
+        type: string
+        required: false
+        default: ''
+    secrets:
+      LISTING_DISPATCH_TOKEN:
+        description: >-
+          PAT with `contents: write` on the listing repository. Required by the
+          repository dispatch API — the package repo's own GITHUB_TOKEN cannot
+          reach another repository.
+        required: true
+
+jobs:
+  notify:
+    name: notify-listing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger listing rebuild
+        env:
+          GH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
+          LISTING_REPO: ${{ inputs.listing-repo }}
+          SOURCE_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag != '' && inputs.tag || github.event.release.tag_name }}
+        run: |
+          echo "Notifying ${LISTING_REPO} about ${SOURCE_REPO}@${RELEASE_TAG:-unknown}"
+
+          jq -n \
+            --arg repository "$SOURCE_REPO" \
+            --arg tag "$RELEASE_TAG" \
+            '{event_type: "package-released", client_payload: {repository: $repository, tag: $tag}}' \
+            > payload.json
+
+          # The release event fires once, and a dispatch that never lands leaves
+          # the listing stale with nothing to retry it — the listing repo's retry
+          # workflow reacts to builds, and a failed dispatch produces no build.
+          # So retry here, on transient API/network/rate-limit errors.
+          for attempt in 1 2 3 4 5; do
+            if gh api --method POST "repos/${LISTING_REPO}/dispatches" --input payload.json; then
+              echo "Listing rebuild requested."
+              exit 0
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              delay=$((attempt * 15))
+              echo "Dispatch failed (attempt ${attempt}/5); retrying in ${delay}s."
+              sleep "$delay"
+            fi
+          done
+
+          echo "::error::Could not notify ${LISTING_REPO} after 5 attempts." \
+               "If this is not a transient outage, check that LISTING_DISPATCH_TOKEN" \
+               "is valid and still has 'Contents: write' on ${LISTING_REPO}."
+          exit 1
