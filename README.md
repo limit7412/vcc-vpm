@@ -31,47 +31,81 @@ Whenever you make a change to the `main` branch, or when you trigger it manually
 
 ## 🔄 Auto-Updating on New Releases
 
-The listing is rebuilt automatically when a linked package publishes a new release,
-so you don't have to touch `source.json` every time.
+The listing rebuilds itself the moment a linked package publishes a release, so you
+don't have to touch `source.json` every time. There is no polling and no schedule:
+the release itself is the trigger.
 
-### Scheduled detection (no setup required)
-The [`detect-release.yml`](.github/workflows/detect-release.yml) workflow runs every
-6 hours, checks the latest release (including prereleases) of every repository listed
-in [`githubRepos`](source.json), and re-triggers the 'Build Repo Listing' action only
-when it detects a new release. The new release is remembered only after the listing
-deploys successfully, so a failed build is automatically retried on the next check.
-You can also run it manually from the "Actions" tab
-("Detect Package Releases" → "Run workflow"), and you can change the schedule by
-editing the `cron` expression in that file.
+### How it works
 
-### Instant updates on release (optional)
-If you want the listing to update the moment a package is released (instead of
-waiting up to 6 hours), add a workflow like the following to the **package
-repository**. It sends a `repository_dispatch` event that immediately triggers the
-build here:
+GitHub only delivers `release` events to workflows **inside the repository that
+published the release** — this listing repo cannot subscribe to another repo's
+releases. So the notification is pushed the other way around:
+
+1. The package repo publishes a release.
+2. Its `release` trigger calls [`notify-listing.yml`](.github/workflows/notify-listing.yml)
+   from this repo, which sends a `repository_dispatch` (`package-released`) event here.
+3. That event triggers ['Build Repo Listing'](.github/workflows/build-listing.yml),
+   which re-indexes every repository in [`githubRepos`](source.json) and redeploys
+   the Pages site.
+
+Because step 3 always reads the current releases, one notification is enough to pick
+up everything — nothing needs to be remembered between runs.
+
+### Setup, per package repository
+
+**1. Create a token.** A fine-grained [Personal Access Token](https://github.com/settings/personal-access-tokens)
+scoped to *only this listing repository*, with **Contents: Read and write** (the
+permission the repository dispatch API requires). The package repo's own
+`GITHUB_TOKEN` cannot reach another repository, which is why a token is needed.
+
+**2. Store it** in the package repo under Settings → Secrets and variables → Actions
+as `LISTING_DISPATCH_TOKEN`.
+
+**3. Add this workflow** to the package repo:
 
 ```yaml
-# .github/workflows/notify-vpm-listing.yml in your package repo
+# .github/workflows/notify-vpm-listing.yml
 name: Notify VPM Listing
 on:
   release:
-    types: [published]
+    types: [published, released]
 jobs:
   notify:
-    runs-on: ubuntu-latest
-    steps:
+    uses: limit7412/vcc-vpm/.github/workflows/notify-listing.yml@main
+    secrets: inherit
+```
+
+`published` covers normal releases and prereleases; `released` also fires when an
+existing prerelease is promoted to a full release. You can add `edited` and
+`deleted` if you want edits and removals reflected too — rebuilding is idempotent,
+so extra notifications are harmless.
+
+If you'd rather not depend on a workflow in this repo, the equivalent inline step is:
+
+```yaml
       - name: Trigger listing rebuild
         run: |
-          curl -X POST \
+          curl -fsS -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.LISTING_DISPATCH_TOKEN }}" \
             https://api.github.com/repos/limit7412/vcc-vpm/dispatches \
             -d '{"event_type":"package-released"}'
 ```
 
-`LISTING_DISPATCH_TOKEN` must be a Personal Access Token (or fine-grained token)
-with `contents: write` / Actions permission on this listing repository, stored as a
-secret in the package repository.
+### Packages you don't control
+
+A third-party repository in `githubRepos` can't be given a notifier workflow, so its
+releases won't announce themselves. For those, rebuild manually from the "Actions"
+tab ('Build Repo Listing' → "Run workflow"), or add a periodic safety net back to
+[`build-listing.yml`](.github/workflows/build-listing.yml):
+
+```yaml
+on:
+  schedule:
+    - cron: '0 6 * * *' # rebuild daily regardless of notifications
+```
+
+Note that this rebuilds and redeploys unconditionally rather than only on change.
 
 ## 🏠 Customizing the Landing Page
 

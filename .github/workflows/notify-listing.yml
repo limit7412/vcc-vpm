@@ -1,0 +1,61 @@
+name: Notify Listing
+
+# Reusable workflow for the *package* repositories listed in `source.json`
+# (`githubRepos`). A package repo calls this from its own `release` trigger, and
+# it sends a `repository_dispatch` event to this listing repo, which rebuilds the
+# VPM listing immediately (see build-listing.yml).
+#
+# GitHub only delivers `release` events to workflows inside the releasing
+# repository, so the listing repo cannot subscribe to them itself — the package
+# repo has to push the notification. That is what this workflow is for.
+#
+# Usage, in the package repository:
+#
+#   # .github/workflows/notify-vpm-listing.yml
+#   name: Notify VPM Listing
+#   on:
+#     release:
+#       types: [published, released]
+#   jobs:
+#     notify:
+#       uses: limit7412/vcc-vpm/.github/workflows/notify-listing.yml@main
+#       secrets: inherit
+#
+# `LISTING_DISPATCH_TOKEN` must be a secret in the package repository holding a
+# fine-grained Personal Access Token scoped to the listing repository with
+# "Contents: Read and write" (the permission the dispatch API requires).
+
+on:
+  workflow_call:
+    inputs:
+      listing-repo:
+        description: The listing repository to notify, as `owner/repo`.
+        type: string
+        required: false
+        default: limit7412/vcc-vpm
+    secrets:
+      LISTING_DISPATCH_TOKEN:
+        description: >-
+          PAT with `contents: write` on the listing repository. Required by the
+          repository dispatch API — the package repo's own GITHUB_TOKEN cannot
+          reach another repository.
+        required: true
+
+jobs:
+  notify:
+    name: notify-listing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger listing rebuild
+        env:
+          GH_TOKEN: ${{ secrets.LISTING_DISPATCH_TOKEN }}
+          LISTING_REPO: ${{ inputs.listing-repo }}
+          SOURCE_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          echo "Notifying ${LISTING_REPO} about ${SOURCE_REPO}@${RELEASE_TAG:-unknown}"
+          jq -n \
+            --arg repository "$SOURCE_REPO" \
+            --arg tag "$RELEASE_TAG" \
+            '{event_type: "package-released", client_payload: {repository: $repository, tag: $tag}}' \
+            | gh api "repos/${LISTING_REPO}/dispatches" --input -
