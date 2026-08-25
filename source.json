@@ -6,6 +6,7 @@
         "name":"kairox"
     },
     "githubRepos":[
-        "limit7412/VRCARKitBlendShapeGenerator"
+        "limit7412/VRCARKitBlendShapeGenerator",
+        "limit7412/VRCFE-JsTBridge"
     ]
 }
